@@ -67,7 +67,8 @@ model.fit(n_epochs=1000, batch_size=1024, checkpoint_dict=dict(print_stride=100)
 
 In this example, we have:
 
--   **Prior Distribution**: A normal distribution is used with a shape of `(1,)`.
+-   **Prior Distribution**: A normal distribution is used with a shape of
+    `(1,)`; one could also set `shape=1`.
 
 -   **Action**: A quartic scalar theory is defined with parameters
     `kappa=0`, `m_sq=-2.0`, and `lambda=0.2`.
