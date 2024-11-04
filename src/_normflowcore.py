@@ -1,21 +1,10 @@
-# Copyright (c) 2021-2022 Javad Komijani
+# Copyright (c) 2021-2024 Javad Komijani
 
-"""This is a module containing the core components for normalizing flow.
-
-The central high-level class is called Model, which takes instances of
-other classes as input (prior, net_, and action) and provides untilities
-to perform training and drawing samples.
-
-Every instance of the central high-level class Model alreay has an instance of
-Fitter, which can be used for training.
-
-For drawing samples, one can use ".raw_dist", which does not perform any
-Metropolis accept/reject on the samples, or one can use ".mcmc" if Metropolis
-accept/reject needed.
-
-Other central classes in this module are Module_, and ModuleList_
-that allow us to define neural networks; these two classes are imported and
-used by other modules of this package.
+"""
+This module contains high-level classes for normalizing flow techniques,
+with the central `Model` class integrating essential components such as priors,
+networks, and actions. It provides utilities for training and sampling,
+along with support for MCMC sampling and device management.
 """
 
 import torch
@@ -29,106 +18,198 @@ from .mcmc import MCMCSampler, BlockedMCMCSampler
 from .lib.combo import estimate_logz, fmt_val_err
 from .device import ModelDeviceHandler
 
+
 # =============================================================================
 class Model:
-    """The central high-level class of the package, which
-    takes instances of other classes as input (prior, net_, and action)
-    and provides untilities to perform training and drawing samples.
+    """
+    The central high-level class of the package, which integrates instances of
+    essential classes (`prior`, `net_`, and `action`) to provide utilities for
+    training and sampling. This class interfaces with various core components
+    to facilitate training, posterior inference, MCMC sampling, and device
+    management.
 
     Parameters
     ----------
-    prior : An instance of a Prior class (e.g NormalPrior).
+    prior : instance of a `Prior` class
+        An instance of a Prior class (e.g., `NormalPrior`) representing the
+        model's prior distribution.
 
-    net_ : An instance of ModuleList_ or similar classes. The trailing
-        underscore implies that the associate forward method handles
-        the Jacobian of the transformation.
+    net_ : instance of a `Module_` class
+        A model component responsible for the transformations required in the
+        model. The trailing underscore indicates that the associated forward
+        method computes and returns the Jacobian of the transformation, which
+        is crucial in the method of normalizing flows.
 
-    action : An instance of a class that describes the action.
+    action : instance of an `Action` class
+        Defines the model's action, which specified the target distribution
+        during training.
 
-    name : str, option
-        A string to label the model
+    Attributes
+    ----------
+    fit : Fitter
+        An instance of the Fitter class, responsible for training the model.
+        `fit` is aliased to `train` for flexibility in usage.
+
+    posterior : Posterior
+        An instance of the Posterior class, which manages posterior inference
+        on the model parameters.
+
+    mcmc : MCMCSampler
+        An instance of the MCMCSampler class, enabling MCMC sampling for
+        posterior distributions.
+
+    blocked_mcmc : BlockedMCMCSampler
+        An instance of the BlockedMCMCSampler class, providing blockwise
+        MCMC sampling for improved sampling efficiency.
+
+    device_handler : ModelDeviceHandler
+        Manages the device (CPU/GPU) for model training and inference, ensuring
+        seamless operation across hardware setups.
     """
 
-    def __init__(self, *, prior, net_, action, name=None):
-        self.name = name
+    def __init__(self, *, prior, net_, action):
         self.net_ = net_
         self.prior = prior
         self.action = action
 
+        # Components for training, sampling, and device handling
         self.fit = Fitter(self)
+        self.train = self.fit  # Alias for `fit`
 
         self.posterior = Posterior(self)
-        self.raw_dist = self.posterior  # alias; todo: remove later
         self.mcmc = MCMCSampler(self)
         self.blocked_mcmc = BlockedMCMCSampler(self)
         self.device_handler = ModelDeviceHandler(self)
 
-    def transform(self, x):
-        return self.net_(x)[0]
-
 
 class Posterior:
-    """A class for drawing samples from given model. Note that the samples
-    are drawn directly from the model without performing any accept/reject
-    filtering.
+    """
+    Creates samples directly from a trained probabilistic model.
+
+    The `Posterior` class generates samples from a specified model without
+    using an accept-reject step, making it suitable for tasks that require
+    quick, direct sampling. All methods in this class use `torch.no_grad()`
+    to prevent gradient computation.
 
     Parameters
     ----------
-    model : An instance of Model
+    model : Model
+        A trained model to sample from.
+
+    Methods
+    -------
+    sample(batch_size=1, **kwargs)
+        Returns a specified number of samples from the model.
+
+    sample_(batch_size=1, preprocess_func=None)
+        Returns samples and their log probabilities, with an optional
+        preprocessing function.
+
+    sample__(batch_size=1, **kwargs)
+        Similar to `sample_`, but also returns the log probability of the
+        target distribution.
+
+    log_prob(y)
+        Computes the log probability of given samples.
     """
 
-    def __init__(self, model):
+    def __init__(self, model: Model):
         self._model = model
 
     @torch.no_grad()
     def sample(self, batch_size=1, **kwargs):
+        """
+        Draws samples from the model.
+
+        Parameters
+        ----------
+        batch_size : int, optional
+            Number of samples to draw, default is 1.
+
+        Returns
+        -------
+        Tensor
+            Generated samples.
+        """
         return self.sample_(batch_size=batch_size, **kwargs)[0]
 
     @torch.no_grad()
     def sample_(self, batch_size=1, preprocess_func=None):
         """
-        Return `batch_size` samples along with `log(q)` and `log(p)`.
+        Draws samples and their log probabilities from the model.
 
         Parameters
         ----------
-        batch_size: int
-            The size of the samples
+        batch_size : int, optional
+            Number of samples to draw, default is 1.
 
-        preprocess_func: None or a function
-            Introduced to preprocess the prior sample if needed
+        preprocess_func : function or None, optional
+            A function to adjust the prior samples if needed. It should take
+            samples and log probabilities as input and return modified values.
+
+        Returns
+        -------
+        tuple
+            - `y`: Generated samples.
+            - `logq`: Log probabilities of the samples.
         """
         x, logr = self._model.prior.sample_(batch_size)
+
         if preprocess_func is not None:
             x, logr = preprocess_func(x, logr)
-        y, logJ = self._model.net_(x)
-        logq = logr - logJ
+
+        y, logj = self._model.net_(x)
+        logq = logr - logj
         return y, logq
 
     @torch.no_grad()
     def sample__(self, batch_size=1, **kwargs):
+        """
+        Similar to `sample_`, but also returns the log probability of the
+        target distribution from `model.action`.
+
+        Parameters
+        ----------
+        batch_size : int, optional
+            Number of samples to draw, default is 1.
+
+        Returns
+        -------
+        tuple
+            - `y`: Generated samples.
+            - `logq`: Log probabilities of the samples.
+            - `logp`: Log probabilities from the target distribution.
+        """
         y, logq = self.sample_(batch_size=batch_size, **kwargs)
-        logp = -self._model.action(y)  # logp is log(p * z)
+        logp = -self._model.action(y)  # logp is log(p_{non-normalized})
         return y, logq, logp
 
     @torch.no_grad()
     def log_prob(self, y):
-        """Returns log probability of the samples."""
-        x, minus_logJ = self._model.net_.backward(y)
+        """
+        Computes the log probability of the provided samples.
+
+        Parameters
+        ----------
+        y : torch.Tensor
+            Samples for which to calculate the log probability.
+
+        Returns
+        -------
+        Tensor
+            Log probabilities of the samples.
+        """
+        x, minus_logj = self._model.net_.reverse(y)
         logr = self._model.prior.log_prob(x)
-        logq = logr + minus_logJ
+        logq = logr + minus_logj
         return logq
 
 
 # =============================================================================
 class Fitter:
-    """A class for training a given model.
+    """A class for training a given model."""
 
-    Parameters
-    ----------
-    model : An instance of Model
-    """
-
-    def __init__(self, model):
+    def __init__(self, model: Model):
         self._model = model
 
         self.train_batch_size = 1
@@ -143,7 +224,6 @@ class Fitter:
             display=False,
             print_stride=100,
             print_batch_size=1024,
-            print_extra_func=None,
             snapshot_path=None,
             epochs_run=0
             )
@@ -164,29 +244,29 @@ class Fitter:
         Parameters
         ----------
         n_epochs : int
-            Number of epochs of training
+            Number of epochs of training.
 
         save_every: int
-            save a model every <save_every> epochs
+            save a model every <save_every> epochs.
 
         batch_size : int
-            Size of samples used at each epoch
+            Size of samples used at each epoch.
 
         optimizer_class : optimization class, optional
             By default is set to torch.optim.AdamW, but can be changed.
 
         scheduler : scheduler class, optional
-            By default no scheduler is used
+            By default no scheduler is used.
 
         loss_fn : None or function, optional
-            The default value is None, which translates to using KL divergence
+            The default value is None, which translates to using KL divergence.
 
         hyperparam : dict, optional
             Can be used to set hyperparameters like the learning rate and decay
-            weights
+            weights.
 
         checkpoint_dict : dict, optional
-            Can be set to control the displayed/printed results
+            Can be set to control the printing and saving of the training status.
         """
         self.hyperparam.update(hyperparam)
         self.checkpoint_dict.update(checkpoint_dict)
@@ -208,25 +288,29 @@ class Fitter:
         self.loss_fn = Fitter.calc_kl_mean if loss_fn is None else loss_fn
 
         net_ = self._model.net_
-        if '_groups' is net_.__dict__.keys():
+        if '_groups' in net_.__dict__.keys():
             parameters = net_.grouped_parameters()
         else:
             parameters = net_.parameters()
         self.optimizer = optimizer_class(parameters, **self.hyperparam)
 
-        self.scheduler = None if scheduler is None else scheduler(self.optimizer)
+        if scheduler is None:
+            self.scheduler = None
+        else:
+            self.scheduler = scheduler(self.optimizer)
 
-        return self.train(n_epochs, batch_size, save_every)
+        if n_epochs > 0:
+            self._train(n_epochs, batch_size, save_every)
 
     def _load_snapshot(self):
         snapshot_path = self.checkpoint_dict['snapshot_path']
         if torch.cuda.is_available():
             gpu_id = self._model.device_handler.rank
-            #gpu_id = int(os.environ["LOCAL_RANK"]) might be needed for torchrun ??
+            # gpu_id = int(os.environ["LOCAL_RANK"]) might be needed for torchrun ??
             loc = f"cuda:{gpu_id}"
             print(f"GPU: Attempting to load saved model into {loc}")
         else: 
-            loc = None # cpu training
+            loc = None  # cpu training
             print("CPU: Attempting to load saved model")
         snapshot = torch.load(snapshot_path, map_location=loc)
         self._model.net_.load_state_dict(snapshot["MODEL_STATE"]) 
@@ -234,9 +318,9 @@ class Fitter:
         print(f"Snapshot found: {snapshot_path}\nResuming training via Saved Snapshot at Epoch {snapshot['EPOCHS_RUN']}")
 
     def _save_snapshot(self, epoch):
-        """ Save snapshot of training for analysis and/or to continue
-            training at a later date. """
-        
+        """Save snapshot of training for analysis and/or to continue training
+        at a later date.
+        """
         snapshot_path = self.checkpoint_dict['snapshot_path']
         epochs_run = epoch + self.checkpoint_dict['epochs_run']
         snapshot_new_path = snapshot_path.rsplit('.',2)[0] + ".E" + str(epochs_run) + ".tar" 
@@ -246,25 +330,11 @@ class Fitter:
         torch.save(snapshot, snapshot_new_path)
         print(f"Epoch {epochs_run} | Model Snapshot saved at {snapshot_new_path}")
 
-    def train(self, n_epochs, batch_size, save_every):
-        """Train the model.
+    def _train(self, n_epochs: int, batch_size: int, save_every: int):
 
-        Parameters
-        ----------
-        n_epochs : int
-            Number of epochs of training
-
-        batch_size : int
-            Size of samples used at each epoch
-
-        **Note**: this method is meant to be called by `__call__`,
-        but it can be called directly subject to `__call__`
-        being called at least once.
-        """
-        self.train_batch_size = batch_size
         T1 = time.time()
         for epoch in range(1, n_epochs+1):
-            loss, logqp = self.step()
+            loss, logqp = self.step(batch_size)
             self.checkpoint(epoch, loss, save_every)
             if self.scheduler is not None:
                 self.scheduler.step()
@@ -272,24 +342,23 @@ class Fitter:
         if n_epochs > 0 and self._model.device_handler.rank == 0:
             print(f"({loss.device}) Time = {T2 - T1:.3g} sec.")
 
-    def step(self):
+    def step(self, batch_size):
         """Perform a train step with a batch of inputs"""
         net_ = self._model.net_
         prior = self._model.prior
         action = self._model.action
-        batch_size = self.train_batch_size
 
         x, logr = prior.sample_(batch_size)
         y, logJ = net_(x)
         logq = logr - logJ
         logp = -action(y)
         loss = self.loss_fn(logq, logp)
+
         self.optimizer.zero_grad()  # clears old gradients from last steps
+
         loss.backward()
-        if torch.isnan(loss):
-            print("OOPS: loss is divergent -> no *step* is taken.")
-        else:
-            self.optimizer.step()
+
+        self.optimizer.step()
 
         return loss, logq - logp
 
@@ -320,12 +389,10 @@ class Fitter:
                 loss_ = self.loss_fn(logq, logp)
                 self._append_to_train_history(logq, logp)
                 self.print_fit_status(epoch, loss=loss_)
-        
 
     @staticmethod
     def calc_kl_mean(logq, logp):
-        """Return Kullback-Leibler divergence estimated
-            from logq and logp """
+        """Return Kullback-Leibler divergence estimated from logq and logp."""
         return (logq - logp).mean()  # KL, assuming samples from q
 
     @staticmethod
@@ -338,32 +405,11 @@ class Fitter:
 
     @staticmethod
     def calc_direct_kl_mean(logq, logp):
-        """Return *direct* KL mean, which is defined as
-        .. math::
-           \frac{\sum \frac{p}{q} (\log(\frac{p}{q}) + logz)}{\sum \frac{p}{q}}
-        where
-        .. math::
-           logz = \log( \sum(frac{p}{q}) / N)
-        wbere N is the number of samples. The direct KL means is invariant
-        under scaling p and/or q.
-        """
         logpq = logp - logq
         logz = torch.logsumexp(logpq, dim=0) - np.log(logp.shape[0])
         logpq = logpq - logz  # p is now normalized
         p_by_q = torch.exp(logpq)
         return (p_by_q * logpq).mean()
-
-    @staticmethod
-    def calc_kl_mean_includelogz(logq, logp):
-        logqp = logq - logp
-        logz = torch.logsumexp(-logqp, dim=0) - np.log(logp.shape[0])
-        return logqp.mean() + logz
-
-    @staticmethod
-    def calc_least_squares(logq, logp):
-        logqp = logq - logp
-        logz = torch.logsumexp(-logqp, dim=0) - np.log(logp.shape[0])
-        return torch.mean((logqp + logz)**2)
 
     @staticmethod
     def calc_minus_logz(logq, logp):
@@ -372,14 +418,20 @@ class Fitter:
 
     @staticmethod
     def calc_ess(logq, logp):
-        """ESS: effective sample size"""
+        """Rerturn effective sample size (ESS)."""
         logqp = logq - logp
-        log_ess = 2*torch.logsumexp(-logqp, dim=0) - torch.logsumexp(-2*logqp, dim=0)
+        log_ess = 2*torch.logsumexp(-logqp, dim=0) \
+                - torch.logsumexp(-2*logqp, dim=0)
         ess = torch.exp(log_ess) / len(logqp)  # normalized
         return ess
 
-    def calc_minus_ess(self, logq, logp):
-        return -self.calc_ess(logq, logp)
+    @staticmethod
+    def calc_minus_logess(logq, logp):
+        """Return logarithm of inverse of effective sample size."""
+        logqp = logq - logp
+        log_ess = 2*torch.logsumexp(-logqp, dim=0) \
+                - torch.logsumexp(-2*logqp, dim=0)
+        return - log_ess + np.log(len(logqp))  # normalized
 
     @torch.no_grad()
     def _append_to_train_history(self, logq, logp):
@@ -422,30 +474,22 @@ class Fitter:
                 fmt_val_err(accept_rate_mean, accept_rate_std, err_digits=1),
                 )
 
-        if self.checkpoint_dict['print_extra_func'] is not None:
-            str_ += self.checkpoint_dict['print_extra_func'](epoch)
-
         print(str_)
 
 
 # =============================================================================
 @torch.no_grad()
-def backward_sanitychecker(
-        model, n_samples=5, net_=None, return_details=False
-        ):
-    """Performs a sanity check on the backward method of networks."""
+def reverse_flow_sanitychecker(model, n_samples=4, net_=None):
+    """Performs a sanity check on the reverse method of modules."""
 
     if net_ is None:
         net_ = model.net_
 
     x = model.prior.sample(n_samples)
-    y, logJ = net_(x)
-    x_hat, log0_hat = net_.backward(y, log0=logJ)
+    y, logj = net_(x)
+    x_hat, minus_logj = net_.reverse(y)
 
-    print("Sanity check is OK if following numbers are zero up to round off:")
-    print(f"{torch.sum(torch.abs(x - x_hat)).item():g}",
-          f"{torch.sum(torch.abs(log0_hat)).item():g}"
-         )
+    mean = lambda z: z.abs().mean().item()
 
-    if return_details:
-        return (x, y, x_hat), (logJ, log0_hat)
+    print("reverse method is OK if following values vanish (up to round off):")
+    print(f"{mean(x - x_hat):g} & {mean(1 + minus_logj / logj):g}")
