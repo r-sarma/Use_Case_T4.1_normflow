@@ -222,7 +222,7 @@ class Fitter:
 
         self.checkpoint_dict = dict(
             display=False,
-            print_stride=100,
+            print_stride=10,
             print_batch_size=1024,
             snapshot_path=None,
             epochs_run=0
@@ -276,14 +276,10 @@ class Fitter:
         if save_every is None:
             save_every = n_epochs
 
-        # decide whether to save/load snapshots
-        if snapshot_path is None:
-            print("Not saving model snapshots")
-        elif os.path.exists(snapshot_path):
+        # decide whether to load a snapshot
+        if (snapshot_path is not None) and os.path.exists(snapshot_path):
             print(f"Trying to load snapshot from {snapshot_path}")
             self._load_snapshot()
-        else:
-            print("Starting training from scratch")
 
         self.loss_fn = Fitter.calc_kl_mean if loss_fn is None else loss_fn
 
@@ -378,7 +374,7 @@ class Fitter:
 
         print_batch_size = print_batch_size // self._model.device_handler.nranks
 
-        if epoch == 1 or epoch == 10 or (epoch % print_stride == 0):
+        if epoch == 1 or (epoch % print_stride == 0):
 
             _, logq, logp = self._model.posterior.sample__(print_batch_size)
 
