@@ -467,14 +467,8 @@ class Fitter:
                   + "mean & error are obtained from samples in a batch\n")
 
         epoch += self.checkpoint_dict['epochs_run']
-        str_ = f"Epoch: {epoch} | loss: {loss:g} | ess: {ess:g} | rho: {rho:g}"
-        str_ += " | log(z): {0} | log(q/p): {1} | accept_rate: {2}".format(
-                fmt_val_err(logz_mean, logz_std, err_digits=2),
-                fmt_val_err(adjusted_logqp_mean, logqp_std, err_digits=2),
-                fmt_val_err(accept_rate_mean, accept_rate_std, err_digits=1),
-                )
-
-        print(str_)
+        str1 = f"Epoch: {epoch} | loss: {loss:.4f} | ess: {ess:.4f}"
+        print(str1)
 
 
 # =============================================================================
@@ -487,7 +481,7 @@ def reverse_flow_sanitychecker(model, n_samples=4, net_=None):
 
     x = model.prior.sample(n_samples)
     y, logj = net_(x)
-    x_hat, minus_logj = net_.reverse(y)
+    x_hat, minus_logj = net_.backward(y)
 
     mean = lambda z: z.abs().mean().item()
 
