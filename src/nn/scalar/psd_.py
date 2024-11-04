@@ -24,7 +24,7 @@ class PSDBlock_(Module_):
 
     def forward(self, x, log0=0):
         dim = list(range(1, x.dim()))
-        rvol = np.product(x.shape[1:])**0.5  # square root of volume
+        rvol = np.prod(x.shape[1:])**0.5  # square root of volume
         x_mean = torch.mean(x, dim=dim).reshape(-1, *[1 for _ in dim])
         y_mf, logJ_mf = self.mfnet_.forward(x_mean, rvol=rvol)
         y_fft, logJ_fft = self.fftnet_.forward(x - x_mean)
@@ -32,7 +32,7 @@ class PSDBlock_(Module_):
 
     def backward(self, x, log0=0):
         dim = list(range(1, x.dim()))
-        rvol = np.product(x.shape[1:])**0.5  # square root of volume
+        rvol = np.prod(x.shape[1:])**0.5  # square root of volume
         x_mean = torch.mean(x, dim=dim).reshape(-1, *[1 for _ in dim])
         y_mf, logJ_mf = self.mfnet_.backward(x_mean, rvol=rvol)
         y_fft, logJ_fft = self.fftnet_.backward(x - x_mean)
@@ -41,7 +41,7 @@ class PSDBlock_(Module_):
     def _hack(self, x, log0=0):
         """Similar to the forward method, but returns intermediate parts too."""
         dim = list(range(1, x.dim()))
-        rvol = np.product(x.shape[1:])**0.5  # square root of volume
+        rvol = np.prod(x.shape[1:])**0.5  # square root of volume
         x_mean = torch.mean(x, dim=dim).reshape(-1, *[1 for _ in dim])
         y_mf, logJ_mf = self.mfnet_.forward(x_mean, rvol=rvol)
         y_fft, logJ_fft = self.fftnet_.forward(x - x_mean)

@@ -213,7 +213,7 @@ class FFTNet_(Module_):
         assign a density to it or not!
         """
         if Module_.propagate_density:
-            n = np.product(self.lat_shape)
+            n = np.prod(self.lat_shape)
             ones = torch.ones(*logJ.shape, n)
             return (logJ.unsqueeze(-1) / n * ones).reshape(*logJ.shape, *self.lat_shape)
         else:

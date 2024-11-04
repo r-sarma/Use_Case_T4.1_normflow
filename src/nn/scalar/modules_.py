@@ -65,7 +65,7 @@ class ScaleNet_(Module_):
         if Module_.propagate_density:
             return torch.log(self.weight) * torch.ones(x_shape)
         else:
-            logwscaled = torch.log(self.weight) * np.product(x_shape[1:])
+            logwscaled = torch.log(self.weight) * np.prod(x_shape[1:])
             return logwscaled * torch.ones(x_shape[0], device=self._weight.device)
 
 
